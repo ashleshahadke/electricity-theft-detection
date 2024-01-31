@@ -1,0 +1,199 @@
+#include <lpc213x.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include  "lcd.c"
+
+// Define ADC channels for the two current sensors
+#define SENSOR1_CHANNEL 0
+#define SENSOR2_CHANNEL 1
+#define SENSITIVITY 66  // Sensitivity in mV/A
+unsigned int sensor1Value, sensor2Value;
+unsigned int current;
+unsigned  int difference;
+#define THEFT_THRESHOLD 50
+
+
+
+void _delay_ms(unsigned int t) {
+    unsigned int i,j;
+    // This calculation assumes a 12 MHz clock, adjust for your actual clock frequency
+    for(i=0;i<t;i++)
+   for(j=0;j<10000;j++);
+
+}
+
+// Function to initialize ADC
+
+
+void ADC_Init()
+{
+//channel 1 init
+PINSEL1 |=0x01000000;     //P0.28 - AD0.0 as input
+AD0CR =0x00200301;
+//channel 2 init-LM35 channel;
+PINSEL1 |=0x04000000;      //P0.29 - AD0.1 as input
+AD0CR =0x00200302;                                                                    //****//
+}
+
+// Function to read ADC values
+unsigned int  ADC_Read(unsigned int channel) {
+    AD0CR = (AD0CR & 0xFFFFFC00) | (1 << 24) | (1 << channel);
+
+    // Start the conversion
+    AD0CR |= (1 << 24);
+
+    // Wait for the conversion to complete
+    while (!(AD0DR & (1 << 31)));
+
+    // Return the 10-bit ADC result
+    return ((AD0DR >> 6) & 0x3FF);
+}
+
+// Function to detect theft
+
+int isTheftDetected(void) {
+    // Read current from the ACS712 sensor
+    unsigned int currentReading = ADC_Read(SENSOR1_CHANNEL);
+ unsigned int currentReading2 = ADC_Read(SENSOR2_CHANNEL);
+    unsigned int diff=currentReading-currentReading2;
+    // Calculate current in mA using ACS712 sensitivity
+     current= (diff *SENSITIVITY) / 1000;
+
+    // Check if the current is below the theft threshold
+    if (current < THEFT_THRESHOLD ) {
+        return 1;  // Theft detected
+    } else {
+        return 0;  // No theft
+    }
+}
+
+// Function to send data to the LCD
+unsigned int a;
+int main() {
+    // Initialize ADC and LCD
+    ADC_Init();
+    LCD_INIT();
+ while (1) {
+        if (isTheftDetected()){
+LCD_CMD(0x01);
+        LCD_CMD(0x80); // Set cursor to the first line
+        // Display the difference on the LCD
+        LCD_STRING("THEFT");
+        LCD_CMD(0X0C); //set cursor to second line
+ }
+else{
+LCD_CMD(0x01);
+          LCD_CMD(0x80);
+LCD_STRING("NO THEFT");
+}
+
+delay_ms(1000);
+    }
+return 0;
+} 
+Lcd code  : 
+
+
+#include <lpc214x.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <stdio.h>
+#define RS (1 << 16)
+#define RW (1 << 17)
+#define EN (1 << 18)
+#define LCD_DATA_PORT IO0PIN
+#define Enable_Pulse() IOSET0|=1<<EN;delay_ms(1);IOCLR0=1<<EN;delay_ms(1);
+void delay_ms(unsigned int j) /* Function for delay in milliseconds  */
+{
+    unsigned int x,i;
+for(i=0;i<j;i++)
+{
+    for(x=0; x<6000; x++);    /* loop to generate 1 millisecond delay with Cclk = 60MHz */
+}
+}
+
+
+void LCD_CMD(char command)
+{
+IO0PIN = ( (IO0PIN & 0xFFFF00FF) | (command<<8) );
+IO0SET = 0x00000040; /* EN = 1 */
+IO0CLR = 0x00000030; /* RS = 0, RW = 0 */
+delay_ms(2);
+IO0CLR = 0x00000040; /* EN = 0, RS and RW unchanged(i.e. RS = RW = 0) */
+delay_ms(5);
+}
+
+
+void LCD_INIT(void)
+{
+IO0DIR = 0x0000FFF0; /* P0.8 to P0.15 LCD Data. P0.4,5,6 as RS RW and EN */
+delay_ms(20);
+LCD_CMD(0x38);  /* Initialize lcd */
+LCD_CMD(0x0C);   /* Display on cursor off */
+LCD_CMD(0X0E);   // display 0n cursor blink
+LCD_CMD(0x06);  /* Auto increment cursor */
+LCD_CMD(0x01);   /* Display clear */
+LCD_CMD(0x80);  /* First line first position */
+}
+
+
+void LCD_STRING (char* msg)
+{
+unsigned int i=0;
+while(msg[i]!=0)
+{
+IO0PIN = ( (IO0PIN & 0xFFFF00FF) | (msg[i]<<8) );
+IO0SET = 0x00000050; /* RS = 1, , EN = 1 */
+IO0CLR = 0x00000020; /* RW = 0 */
+delay_ms(2);
+IO0CLR = 0x00000040; /* EN = 0, RS and RW unchanged(i.e. RS = 1, RW = 0) */
+delay_ms(5);
+i++;
+}
+}
+
+
+void LCD_CHAR (char msg)
+{
+IO0PIN = ( (IO0PIN & 0xFFFF00FF) | (msg<<8) );
+IO0SET = 0x00000050; /* RS = 1, , EN = 1 */
+IO0CLR = 0x00000020; /* RW = 0 */
+delay_ms(2);
+IO0CLR = 0x00000040; /* EN = 0, RS and RW unchanged(i.e. RS = 1, RW = 0) */
+delay_ms(5);
+}
+
+
+void Lcd_Data_Shift(unsigned char value)
+{
+
+
+unsigned char i;
+
+
+for(i=0;i<8;i++)
+{
+if(value & 0x01)
+{
+IOSET0 |= (1<<(i+8));
+}
+else
+{
+IOCLR0 |= (1<<(i+8));
+}
+value = value >> 1;
+}
+}
+
+
+void Lcd_Write(unsigned char value)
+{
+
+
+IOSET0 |= (1<<RS);
+IOCLR0 |= (1<<RW);
+IOSET0 |= (1<<EN);
+Lcd_Data_Shift(value);
+Enable_Pulse();
+}
